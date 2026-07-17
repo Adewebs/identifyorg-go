@@ -1,7 +1,7 @@
 // Package identifyorg is the IdentifyOrg server-side SDK for Go:
 // identity verification, prepaid billing, and realtime call/chat token
 // issuance. Server-side only — use your SECRET key
-// (io_test_sk_.../io_live_sk_...) here, never in client code. For
+// (io_test_.../io_live_...) here, never in client code. For
 // browser/mobile clients, mint a token with Client.StreamingToken or
 // Client.ChatToken on your backend and hand the result to the IdentifyOrg
 // JS/React Native/Flutter/Kotlin SDK.
@@ -12,8 +12,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -125,9 +128,16 @@ type VerifyResponse struct {
 	CreatedAt        string         `json:"created_at"`
 }
 
-func (c *Client) VerifyBVN(bvn, firstName, lastName, idempotencyKey string) (*VerifyResponse, error) {
+// VerifyBVN verifies a BVN. phoneNumber (e.g. "08012345678") is required on
+// live keys — the upstream provider rejects BVN match requests without it;
+// test keys ignore it. dateOfBirth is ISO format (YYYY-MM-DD). Pass "" for
+// any field you don't have.
+func (c *Client) VerifyBVN(bvn, firstName, lastName, dateOfBirth, phoneNumber, idempotencyKey string) (*VerifyResponse, error) {
 	var out VerifyResponse
-	body := map[string]string{"bvn": bvn, "first_name": firstName, "last_name": lastName}
+	body := map[string]string{
+		"bvn": bvn, "first_name": firstName, "last_name": lastName,
+		"date_of_birth": dateOfBirth, "phone_number": phoneNumber,
+	}
 	err := c.do(http.MethodPost, "/v1/verify/bvn", nil, body, idempotencyKey, &out)
 	return &out, err
 }
@@ -157,6 +167,90 @@ func (c *Client) VerifyCAC(rcNumber, firstName, lastName, idempotencyKey string)
 	var out VerifyResponse
 	body := map[string]string{"rc_number": rcNumber, "first_name": firstName, "last_name": lastName}
 	err := c.do(http.MethodPost, "/v1/verify/cac", nil, body, idempotencyKey, &out)
+	return &out, err
+}
+
+// doMultipart posts one or more files (field name -> file path) as
+// multipart/form-data, for the file-upload verification endpoints.
+func (c *Client) doMultipart(path string, files map[string]string, idempotencyKey string, out any) error {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	for field, filePath := range files {
+		f, err := os.Open(filePath)
+		if err != nil {
+			return err
+		}
+		part, err := writer.CreateFormFile(field, filepath.Base(filePath))
+		if err != nil {
+			f.Close()
+			return err
+		}
+		if _, err := io.Copy(part, f); err != nil {
+			f.Close()
+			return err
+		}
+		f.Close()
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, c.BaseURL+path, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-IdentifyOrg-Key", c.APIKey)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 300 {
+		var env errorEnvelope
+		_ = json.Unmarshal(raw, &env)
+		return &APIError{Status: resp.StatusCode, Code: env.Error.Code, Message: env.Error.Message}
+	}
+	if out != nil && len(raw) > 0 {
+		return json.Unmarshal(raw, out)
+	}
+	return nil
+}
+
+// VerifyDocument OCR-verifies an ID document photo (national ID, passport,
+// voter's card, driver's licence) at the given file path.
+func (c *Client) VerifyDocument(filePath, idempotencyKey string) (*VerifyResponse, error) {
+	var out VerifyResponse
+	err := c.doMultipart("/v1/verify/document", map[string]string{"file": filePath}, idempotencyKey, &out)
+	return &out, err
+}
+
+// VerifyLiveness checks whether a selfie photo (file path) is a live person
+// (basic anti-spoofing).
+func (c *Client) VerifyLiveness(filePath, idempotencyKey string) (*VerifyResponse, error) {
+	var out VerifyResponse
+	err := c.doMultipart("/v1/verify/liveness", map[string]string{"file": filePath}, idempotencyKey, &out)
+	return &out, err
+}
+
+// VerifyFaceMatch compares a selfie against an ID photo (both file paths) —
+// same person or not.
+func (c *Client) VerifyFaceMatch(selfiePath, idPhotoPath, idempotencyKey string) (*VerifyResponse, error) {
+	var out VerifyResponse
+	err := c.doMultipart(
+		"/v1/verify/face-match",
+		map[string]string{"selfie": selfiePath, "id_photo": idPhotoPath},
+		idempotencyKey, &out,
+	)
 	return &out, err
 }
 
