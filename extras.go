@@ -344,6 +344,144 @@ func (c *Client) SimulateCardPayment(reference string) (map[string]any, error) {
 	return c.biz(http.MethodPost, "/test/simulate-card-payment", nil, map[string]string{"reference": reference})
 }
 
+// --- WhatsApp for platforms ---
+// A workspace (one number) for every client you serve. A test key works on test
+// workspaces: pretend linking, no real number, never billed.
+
+func (c *Client) wa(method, path string, q url.Values, body any) (map[string]any, error) {
+	var out map[string]any
+	err := c.do(method, "/v1/wa"+path, q, body, "", &out)
+	return out, err
+}
+
+// CreateWhatsAppWorkspace makes one workspace per client business. Fields: label (required),
+// external_id, ai_enabled, profile, brand, mode.
+func (c *Client) CreateWhatsAppWorkspace(fields map[string]any) (map[string]any, error) {
+	return c.wa(http.MethodPost, "/channels", nil, fields)
+}
+
+func (c *Client) WhatsAppWorkspaces(externalID string) ([]map[string]any, error) {
+	q := url.Values{}
+	if externalID != "" {
+		q.Set("external_id", externalID)
+	}
+	var out []map[string]any
+	err := c.do(http.MethodGet, "/v1/wa/channels", q, nil, "", &out)
+	return out, err
+}
+
+// GetWhatsAppWorkspace returns live status, plus "qr" (text to draw as a QR code) while waiting to be scanned.
+func (c *Client) GetWhatsAppWorkspace(id string) (map[string]any, error) {
+	return c.wa(http.MethodGet, "/channels/"+id, nil, nil)
+}
+
+// UpdateWhatsAppWorkspace changes label, ai_enabled, mode or brand.
+func (c *Client) UpdateWhatsAppWorkspace(id string, fields map[string]any) (map[string]any, error) {
+	return c.wa(http.MethodPatch, "/channels/"+id, nil, fields)
+}
+
+func (c *Client) DeleteWhatsAppWorkspace(id string) error {
+	_, err := c.wa(http.MethodDelete, "/channels/"+id, nil, nil)
+	return err
+}
+
+// ConnectWhatsApp starts linking and returns connect_url, the hosted page to send your client to.
+func (c *Client) ConnectWhatsApp(id string) (map[string]any, error) {
+	return c.wa(http.MethodPost, "/channels/"+id+"/connect", nil, map[string]any{})
+}
+
+func (c *Client) DisconnectWhatsApp(id string) (map[string]any, error) {
+	return c.wa(http.MethodPost, "/channels/"+id+"/disconnect", nil, map[string]any{})
+}
+
+func (c *Client) SetWhatsAppProfile(id string, profile map[string]any) (map[string]any, error) {
+	return c.wa(http.MethodPut, "/channels/"+id+"/profile", nil, profile)
+}
+
+func (c *Client) SetWhatsAppRules(id string, rules []map[string]any) (map[string]any, error) {
+	return c.wa(http.MethodPut, "/channels/"+id+"/rules", nil, map[string]any{"rules": rules})
+}
+
+// SetWhatsAppWebsite sets where customer messages are sent, signed. It returns the signing secret.
+func (c *Client) SetWhatsAppWebsite(id, websiteURL, fallbackMessage string) (map[string]any, error) {
+	body := map[string]any{"url": websiteURL}
+	if fallbackMessage != "" {
+		body["fallback_message"] = fallbackMessage
+	}
+	return c.wa(http.MethodPut, "/channels/"+id+"/website", nil, body)
+}
+
+// SendWhatsApp replies to a customer who messaged this number. Fields: to, text, media, session ("start" or "end").
+func (c *Client) SendWhatsApp(id string, fields map[string]any) (map[string]any, error) {
+	return c.wa(http.MethodPost, "/channels/"+id+"/send", nil, fields)
+}
+
+func (c *Client) ReplyToWhatsAppConversation(conversationID, body string) (map[string]any, error) {
+	return c.wa(http.MethodPost, "/conversations/"+conversationID+"/reply", nil, map[string]any{"body": body})
+}
+
+// TestWhatsAppAssistant asks the assistant a question. Nothing is sent or billed.
+func (c *Client) TestWhatsAppAssistant(id, message string) (map[string]any, error) {
+	return c.wa(http.MethodPost, "/channels/"+id+"/test", nil, map[string]any{"message": message, "history": []any{}})
+}
+
+// TestWhatsAppScan pretends the QR code was scanned (test workspaces only).
+func (c *Client) TestWhatsAppScan(id string) (map[string]any, error) {
+	return c.wa(http.MethodPost, "/channels/"+id+"/test/scan", nil, map[string]any{})
+}
+
+// TestWhatsAppInbound sends a pretend customer message through your rules, your website and the assistant (test workspaces only).
+func (c *Client) TestWhatsAppInbound(id, text, fromPhone string) (map[string]any, error) {
+	body := map[string]any{"text": text}
+	if fromPhone != "" {
+		body["from_phone"] = fromPhone
+	}
+	return c.wa(http.MethodPost, "/channels/"+id+"/test/inbound", nil, body)
+}
+
+func (c *Client) WhatsAppPlans() (map[string]any, error) {
+	return c.wa(http.MethodGet, "/plans", nil, nil)
+}
+func (c *Client) WhatsAppSubscription() (map[string]any, error) {
+	return c.wa(http.MethodGet, "/subscription", nil, nil)
+}
+func (c *Client) UseWhatsAppPayPerReply() (map[string]any, error) {
+	return c.wa(http.MethodPost, "/subscription", nil, map[string]any{"tier": "payg"})
+}
+
+// WhatsAppUsage reports replies and cost per workspace and per day. workspaceID may be empty.
+func (c *Client) WhatsAppUsage(days int, workspaceID string) (map[string]any, error) {
+	q := url.Values{"days": {strconv.Itoa(days)}}
+	if workspaceID != "" {
+		q.Set("channel_id", workspaceID)
+	}
+	return c.wa(http.MethodGet, "/usage", q, nil)
+}
+
+func (c *Client) GetWhatsAppBrand() (map[string]any, error) {
+	return c.wa(http.MethodGet, "/brand", nil, nil)
+}
+
+// SetWhatsAppBrand sets your default look for every connect page. Empty fields are cleared.
+func (c *Client) SetWhatsAppBrand(name, logoURL, color string) (map[string]any, error) {
+	body := map[string]any{"name": name, "logo_url": logoURL}
+	if color != "" {
+		body["color"] = color
+	}
+	return c.wa(http.MethodPut, "/brand", nil, body)
+}
+
+// UploadWhatsAppLogo uploads a PNG, JPEG, WebP or SVG up to 5 MB. Pass a workspace id for one workspace only.
+func (c *Client) UploadWhatsAppLogo(filePath, workspaceID string) (map[string]any, error) {
+	path := "/v1/wa/brand/logo"
+	if workspaceID != "" {
+		path = "/v1/wa/channels/" + workspaceID + "/brand/logo"
+	}
+	var out map[string]any
+	err := c.doMultipart(path, map[string]string{"file": filePath}, "", &out)
+	return out, err
+}
+
 // --- Address verification ---
 
 // VerifyAddress starts an address check. Send the person confirm_url from the result so they can share their location.

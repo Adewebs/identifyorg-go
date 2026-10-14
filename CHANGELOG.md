@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- Added WhatsApp for platforms: create a workspace for each client, start linking (hosted connect page or your own QR), set business info, rules and your website, send replies, read conversations, and pick pay per reply.
+- Added test-mode helpers: pretend scan and pretend customer messages through the real pipeline, never billed.
+- Added usage reports per workspace and per day.
+- Added branding: set your default name, logo and colour for every connect page, and override them per workspace (logo upload included).
+
 ## 0.4.0
 
 - Added taking payments: bank account numbers for your customers, card payment links, received payments, withdrawals, refunds, payout account, business profile and the payment event feed. Test keys use pretend money and include helpers to simulate a payment.

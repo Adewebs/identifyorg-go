@@ -102,3 +102,20 @@ acct, _ := client.CreateVirtualAccount("Tunde Bello", "tunde@example.com", "orde
 charge, _ := client.CreateCardCharge(5000, "tunde@example.com", "Tunde Bello", "") // send him the checkout link
 paid, _ := client.ReceivedPayments("", "success", 50)
 ```
+
+## WhatsApp for platforms
+
+```go
+ws, _ := client.CreateWhatsAppWorkspace(map[string]any{"label": "Ada Stores", "external_id": "client_8841"})
+id := ws["id"].(string)
+client.SetWhatsAppBrand("YourPlatform", "", "#0a7f3f") // once, for every connect page
+link, _ := client.ConnectWhatsApp(id)
+fmt.Println(link["connect_url"]) // send your client here
+
+// with a test key: rehearse with no real number and no billing
+client.TestWhatsAppScan(id)
+out, _ := client.TestWhatsAppInbound(id, "How much is a charger?", "")
+fmt.Println(out["replies"])
+client.UseWhatsAppPayPerReply()
+usage, _ := client.WhatsAppUsage(30, "")
+```
