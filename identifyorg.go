@@ -116,16 +116,16 @@ func (c *Client) do(method, path string, query url.Values, body any, idempotency
 // --- Verification ---
 
 type VerifyResponse struct {
-	ID               string         `json:"id"`
-	Type             string         `json:"type"`
-	Status           string         `json:"status"`
-	Match            *bool          `json:"match"`
-	ConfidenceScore  *int           `json:"confidence_score"`
-	Data             map[string]any `json:"data"`
-	Cost             float64        `json:"cost"`
-	Currency         string         `json:"currency"`
-	IsTest           bool           `json:"is_test"`
-	CreatedAt        string         `json:"created_at"`
+	ID              string         `json:"id"`
+	Type            string         `json:"type"`
+	Status          string         `json:"status"`
+	Match           *bool          `json:"match"`
+	ConfidenceScore *int           `json:"confidence_score"`
+	Data            map[string]any `json:"data"`
+	Cost            float64        `json:"cost"`
+	Currency        string         `json:"currency"`
+	IsTest          bool           `json:"is_test"`
+	CreatedAt       string         `json:"created_at"`
 }
 
 // VerifyBVN verifies a BVN. phoneNumber (e.g. "08012345678") is required on
@@ -257,15 +257,15 @@ func (c *Client) VerifyFaceMatch(selfiePath, idPhotoPath, idempotencyKey string)
 // --- Realtime: calls, streaming, chat ---
 
 type RealtimeToken struct {
-	SessionID          string  `json:"session_id"`
-	RoomName           string  `json:"room_name"`
-	Token              string  `json:"token"`
-	URL                string  `json:"url"`
-	Type               string  `json:"type"`
-	ExpiresInMinutes   int     `json:"expires_in_minutes"`
-	PricePerMinute     float64 `json:"price_per_minute"`
-	Currency           string  `json:"currency"`
-	IsTest             bool    `json:"is_test"`
+	SessionID        string  `json:"session_id"`
+	RoomName         string  `json:"room_name"`
+	Token            string  `json:"token"`
+	URL              string  `json:"url"`
+	Type             string  `json:"type"`
+	ExpiresInMinutes int     `json:"expires_in_minutes"`
+	PricePerMinute   float64 `json:"price_per_minute"`
+	Currency         string  `json:"currency"`
+	IsTest           bool    `json:"is_test"`
 }
 
 // StreamingToken mints a token for a video/voice/stream session. sessionType
@@ -288,22 +288,163 @@ func (c *Client) ChatToken(visitorID, visitorName, channelID string) (*RealtimeT
 	return &out, err
 }
 
-// --- Billing ---
+// --- Website Audit ---
+// The anonymous/claim pair (homepage lead-gen flow) is web-only, not part
+// of the API surface — RunAudit is the same billed path the dashboard uses
+// once a customer is logged in, just with a secret key instead.
 
-type TopupResponse struct {
-	PaymentID         string  `json:"payment_id"`
-	PaymentReference  string  `json:"payment_reference"`
-	Amount            float64 `json:"amount"`
-	Currency          string  `json:"currency"`
-	Status            string  `json:"status"`
-	CheckoutURL       string  `json:"checkout_url"`
+type AuditResult struct {
+	ID             string           `json:"id"`
+	URL            string           `json:"url"`
+	Status         string           `json:"status"`
+	Score          *int             `json:"score"`
+	Grade          *string          `json:"grade"`
+	Findings       []map[string]any `json:"findings"`
+	Lighthouse     map[string]any   `json:"lighthouse"`
+	AISignals      map[string]any   `json:"ai_signals"`
+	Error          *string          `json:"error"`
+	Cost           float64          `json:"cost"`
+	Tier           string           `json:"tier"`
+	GithubRepoURL  *string          `json:"github_repo_url"`
+	AIReview       map[string]any   `json:"ai_review"`
+	GithubReview   map[string]any   `json:"github_review"`
+	ActiveTestsRun bool             `json:"active_tests_run"`
+	CreatedAt      string           `json:"created_at"`
 }
 
-func (c *Client) Topup(amount float64) (*TopupResponse, error) {
-	var out TopupResponse
-	err := c.do(http.MethodPost, "/v1/payments/topup", nil, map[string]float64{"amount": amount}, "", &out)
+// RunAudit starts a website audit. tier is "standard", "ai", or "deep" (pass
+// "" for "standard"). First standard-tier audit is free per account; ai/deep
+// are always billed. "deep" runs in the background — this returns
+// immediately with Status "pending"; poll GetAudit until "ready"/"failed".
+func (c *Client) RunAudit(url, tier, githubRepoURL string) (*AuditResult, error) {
+	if tier == "" {
+		tier = "standard"
+	}
+	var out AuditResult
+	body := map[string]string{"url": url, "tier": tier, "github_repo_url": githubRepoURL}
+	err := c.do(http.MethodPost, "/v1/audits", nil, body, "", &out)
 	return &out, err
 }
+
+func (c *Client) ListAudits(limit int) ([]AuditResult, error) {
+	var out []AuditResult
+	q := url.Values{}
+	if limit > 0 {
+		q.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	err := c.do(http.MethodGet, "/v1/audits", q, nil, "", &out)
+	return out, err
+}
+
+func (c *Client) GetAudit(auditID string) (*AuditResult, error) {
+	var out AuditResult
+	err := c.do(http.MethodGet, "/v1/audits/"+auditID, nil, nil, "", &out)
+	return &out, err
+}
+
+// GetAuditPDF downloads a ready audit's PDF report as raw bytes.
+func (c *Client) GetAuditPDF(auditID string) ([]byte, error) {
+	req, err := http.NewRequest(http.MethodGet, c.BaseURL+"/v1/audits/"+auditID+"/pdf", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-IdentifyOrg-Key", c.APIKey)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		var env errorEnvelope
+		_ = json.Unmarshal(raw, &env)
+		return nil, &APIError{Status: resp.StatusCode, Code: env.Error.Code, Message: env.Error.Message}
+	}
+	return raw, nil
+}
+
+// --- AI Media Detection (image / video / text) ---
+// Self-hosted, no third-party AI-detection API. Same anonymous/claim
+// exclusion as audits above — these are the billed paths.
+
+type MediaScanResult struct {
+	ID              string           `json:"id"`
+	MediaType       string           `json:"media_type"`
+	Status          string           `json:"status"`
+	Verdict         *string          `json:"verdict"`
+	Signals         []map[string]any `json:"signals"`
+	SignalCount     *int             `json:"signal_count"`
+	Details         map[string]any   `json:"details"`
+	SourceFilename  *string          `json:"source_filename"`
+	ContentType     *string          `json:"content_type"`
+	ByteSize        *int64           `json:"byte_size"`
+	ClassifierModel *string          `json:"classifier_model"`
+	DurationSeconds *float64         `json:"duration_seconds"`
+	FramesSampled   *int             `json:"frames_sampled"`
+	TextExcerpt     *string          `json:"text_excerpt"`
+	TextCharCount   *int             `json:"text_char_count"`
+	Error           *string          `json:"error"`
+	Cost            float64          `json:"cost"`
+	IsTest          bool             `json:"is_test"`
+	CreatedAt       string           `json:"created_at"`
+}
+
+// ScanImage checks an image file at filePath. First image scan free per
+// account, then billed.
+func (c *Client) ScanImage(filePath string) (*MediaScanResult, error) {
+	var out MediaScanResult
+	err := c.doMultipart("/v1/media-scan/image", map[string]string{"file": filePath}, "", &out)
+	return &out, err
+}
+
+// ScanText checks a block of text (minimum ~800 characters — shorter text
+// has no reliable signal). First text scan free per account, then billed.
+func (c *Client) ScanText(text string) (*MediaScanResult, error) {
+	var out MediaScanResult
+	err := c.do(http.MethodPost, "/v1/media-scan/text", nil, map[string]string{"text": text}, "", &out)
+	return &out, err
+}
+
+// ScanVideo checks a video file at filePath. frames is the number of sample
+// frames to analyze (4-30; pass 0 to use the default of 12). Always billed,
+// no free trial.
+func (c *Client) ScanVideo(filePath string, frames int) (*MediaScanResult, error) {
+	if frames == 0 {
+		frames = 12
+	}
+	var out MediaScanResult
+	err := c.doMultipart(fmt.Sprintf("/v1/media-scan/video?frames=%d", frames), map[string]string{"file": filePath}, "", &out)
+	return &out, err
+}
+
+// ListScans returns scan history. mediaType filters by "image"/"video"/"text"
+// (pass "" for all).
+func (c *Client) ListScans(mediaType string, limit int) ([]MediaScanResult, error) {
+	var out []MediaScanResult
+	q := url.Values{}
+	if mediaType != "" {
+		q.Set("media_type", mediaType)
+	}
+	if limit > 0 {
+		q.Set("limit", fmt.Sprintf("%d", limit))
+	}
+	err := c.do(http.MethodGet, "/v1/media-scan", q, nil, "", &out)
+	return out, err
+}
+
+func (c *Client) GetScan(scanID string) (*MediaScanResult, error) {
+	var out MediaScanResult
+	err := c.do(http.MethodGet, "/v1/media-scan/"+scanID, nil, nil, "", &out)
+	return &out, err
+}
+
+// --- Billing ---
+// Top-ups, API-key management, domain verification and support tickets are
+// dashboard actions (they need a signed-in session, not an API key), so they
+// are not part of this server-side client.
 
 type BalanceResponse struct {
 	Balance    float64 `json:"balance"`
@@ -343,10 +484,10 @@ func (c *Client) Transactions(query url.Values) (map[string]any, error) {
 // host UI (mute/kick/end buttons), never directly from a client. ---
 
 type ParticipantInfo struct {
-	Identity    string `json:"identity"`
-	Name        string `json:"name"`
-	AudioMuted  *bool  `json:"audio_muted"`
-	VideoMuted  *bool  `json:"video_muted"`
+	Identity   string `json:"identity"`
+	Name       string `json:"name"`
+	AudioMuted *bool  `json:"audio_muted"`
+	VideoMuted *bool  `json:"video_muted"`
 }
 
 func (c *Client) ListParticipants(sessionID string) ([]ParticipantInfo, error) {
