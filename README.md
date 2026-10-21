@@ -119,3 +119,13 @@ fmt.Println(out["replies"])
 client.UseWhatsAppPayPerReply()
 usage, _ := client.WhatsAppUsage(30, "")
 ```
+
+## Hosted face verification
+
+```go
+check, _ := c.CreateLiveness("customer-42", "https://example.com/done", "", 30)
+// send the person to check.URL (browser, WebView or in-app), then:
+verdict, _ := c.GetLiveness(check.ID) // verdict.Passed
+```
+
+> Always confirm the verdict from your server. What the app receives is only a signal. Guide: https://github.com/Adewebs/identifyorg/blob/main/docs/face-verification-integration.md
