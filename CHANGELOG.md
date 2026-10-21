@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0
+
+- `CreateLiveness` / `GetLiveness`: hosted face verification.
+
 ## 0.5.0
 
 - Added WhatsApp for platforms: create a workspace for each client, start linking (hosted connect page or your own QR), set business info, rules and your website, send replies, read conversations, and pick pay per reply.

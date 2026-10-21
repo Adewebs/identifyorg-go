@@ -113,6 +113,47 @@ func (c *Client) do(method, path string, query url.Values, body any, idempotency
 	return nil
 }
 
+// --- Hosted face check ---
+
+type Liveness struct {
+	ID             string         `json:"id"`
+	Status         string         `json:"status"` // pending | passed | failed | expired
+	Passed         *bool          `json:"passed"`
+	Reference      string         `json:"reference"`
+	Attempts       int            `json:"attempts"`
+	VerificationID string         `json:"verification_id"`
+	Reason         string         `json:"reason"`
+	URL            string         `json:"url"` // send the person here (only while pending)
+	FaceMatch      map[string]any `json:"face_match"`
+	ExpiresAt      string         `json:"expires_at"`
+}
+
+// CreateLiveness creates a hosted face check. Send the person to the returned URL
+// (browser, WebView or in-app tab), then call GetLiveness from your server.
+// Pass "" for any field you don't need; referencePhotoB64 is an optional base64 ID photo to match.
+func (c *Client) CreateLiveness(reference, returnURL, referencePhotoB64 string, expiresInMinutes int) (*Liveness, error) {
+	var out Liveness
+	body := map[string]any{"expires_in_minutes": expiresInMinutes}
+	if reference != "" {
+		body["reference"] = reference
+	}
+	if returnURL != "" {
+		body["return_url"] = returnURL
+	}
+	if referencePhotoB64 != "" {
+		body["reference_photo"] = referencePhotoB64
+	}
+	err := c.do(http.MethodPost, "/v1/liveness/hosted", nil, body, "", &out)
+	return &out, err
+}
+
+// GetLiveness reads the verdict of a hosted face check. Always trust this, not what the page tells the app.
+func (c *Client) GetLiveness(id string) (*Liveness, error) {
+	var out Liveness
+	err := c.do(http.MethodGet, "/v1/liveness/hosted/"+url.PathEscape(id), nil, nil, "", &out)
+	return &out, err
+}
+
 // --- Verification ---
 
 type VerifyResponse struct {
